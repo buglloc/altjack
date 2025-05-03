@@ -6,14 +6,13 @@ use serde::Serialize;
 use nusb;
 use nusb::transfer::{Control, ControlType, Recipient, TransferError};
 
+const ALTJACK_VID: u16 = 0x0451;
+const USB_CLASS_HUB: u8 = 0x09;
+const USABLE_PORTS: u8 = 4;
+const USB_TIMEOUT_SEC: u64 = 1;
 
-const ALTJACK_VID: u16      = 0x0451;
-const USB_CLASS_HUB: u8     = 0x09;
-const USABLE_PORTS: u8      = 4;
-const USB_TIMEOUT_SEC: u64  = 1;
-
-const USB_PORT_STAT_CONNECTION: u16  = 0x0001;
-const USB_PORT_STAT_ENABLE: u16      = 0x0002;
+const USB_PORT_STAT_CONNECTION: u16 = 0x0001;
+const USB_PORT_STAT_ENABLE: u16 = 0x0002;
 const USB_PORT_STAT_OVERCURRENT: u16 = 0x0008;
 
 const USB_PORT_STAT_HIGHT_SPEED_POWER: u16 = 0x0100;
@@ -39,18 +38,16 @@ pub fn list(serial: &str) -> Result<impl Iterator<Item = DeviceInfo>, Error> {
                     Some(di_serial) => di_serial == serial,
                     None => true,
                 }
-            }).
-            map(|di| {
-                DeviceInfo{
-                    vid: di.vendor_id(),
-                    pid: di.product_id(),
-                    serial: di.serial_number().map(|s| s.to_string()),
-                    speed: match di.speed() {
-                        Some(speed) => Speed::from_usb(&speed),
-                        _ => None,
-                    },
-                    usb: di,
-                }
+            })
+            .map(|di| DeviceInfo {
+                vid: di.vendor_id(),
+                pid: di.product_id(),
+                serial: di.serial_number().map(|s| s.to_string()),
+                speed: match di.speed() {
+                    Some(speed) => Speed::from_usb(&speed),
+                    _ => None,
+                },
+                usb: di,
             })),
         Err(e) => Err(e),
     }
@@ -94,35 +91,12 @@ impl Device {
         }
     }
 
-    pub fn ports(&self) -> impl Iterator<Item = Result<Port, TransferError>> {
+    pub fn ports(&self) -> impl Iterator<Item = Port> {
         (1..=USABLE_PORTS).map(|p| self.port(p))
     }
 
-    pub fn port(&self, port: u8) -> Result<Port, TransferError> {
-        let mut ust: [u8; 4] = [0; 4];
-        let rc = self.usb.control_in_blocking(
-            Control {
-                control_type: ControlType::Class,
-                recipient: Recipient::Other,
-                request: 0x00, // get status
-                value: 0,
-                index: port as u16,
-            },
-            &mut ust,
-            Duration::from_secs(USB_TIMEOUT_SEC),
-        );
-
-        match rc {
-            Ok(_) => {
-                let status = u16::from_le_bytes([ust[0], ust[1]]);
-                if self.super_speed {
-                    return Ok(Port::new_super_speed(&self.usb, port, status));
-                }
-
-                return Ok(Port::new_hight_speed(&self.usb, port, status));
-            }
-            Err(e) => Err(e)
-        }
+    pub fn port(&self, port: u8) -> Port {
+        Port::new(&self, port)
     }
 }
 
@@ -159,91 +133,92 @@ impl Speed {
 }
 
 #[derive(Serialize)]
-pub struct Port<'usb> {
+pub struct Port<'dev> {
     pub num: u8,
+
+    #[serde(skip)]
+    dev: &'dev Device,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PortState {
     pub status: u16,
     pub powered: bool,
     pub connected: bool,
     pub enabled: bool,
     pub overcurrent: bool,
-
-    #[serde(skip)]
-    usb: &'usb nusb::Device,
 }
 
-impl<'usb> Port<'usb> {
-    fn new_hight_speed(usb: &'usb nusb::Device, num: u8, status: u16) -> Self {
-        Port::_new(usb, num, status, status & USB_PORT_STAT_HIGHT_SPEED_POWER != 0)
+impl<'dev> Port<'dev> {
+    fn new(dev: &'dev Device, num: u8) -> Self {
+        Port { num, dev }
     }
 
-    fn new_super_speed(usb: &'usb nusb::Device, num: u8, status: u16) -> Self {
-        Port::_new(usb, num, status, status & USB_PORT_STAT_SUPER_SPEED_POWER != 0)
-    }
-
-    fn _new(usb: &'usb nusb::Device, num: u8, status: u16, powered: bool) -> Self {
-        if !powered {
-            return Port {
-                usb,
-                num,
-                status,
-                powered: false,
-                connected: false,
-                enabled: false,
-                overcurrent: false,
-            };
-        }
-
-        return Port {
-            usb,
-            num,
-            status,
-            powered: true,
-            connected: status & USB_PORT_STAT_CONNECTION != 0,
-            enabled: status & USB_PORT_STAT_ENABLE != 0,
-            overcurrent: status & USB_PORT_STAT_OVERCURRENT != 0,
-        };
-    }
-
-    pub fn on(&mut self) -> Result<(), TransferError> {
-        match self.usb.control_out_blocking(
+    pub fn state(&self) -> Result<PortState, TransferError> {
+        let mut ust: [u8; 4] = [0; 4];
+        let rc = self.dev.usb.control_in_blocking(
             Control {
                 control_type: ControlType::Class,
                 recipient: Recipient::Other,
-                request: 0x03, // set feature
-                value: 1 << 3, // feat power
-                index: self.num as u16, // port
+                request: 0x00, // get status
+                value: 0,
+                index: self.num as u16,
             },
-            &[],
+            &mut ust,
             Duration::from_secs(USB_TIMEOUT_SEC),
-        ) {
+        );
+
+        match rc {
             Ok(_) => {
-                self.powered = true;
-                Ok(())
+                let status = u16::from_le_bytes([ust[0], ust[1]]);
+                let mut power_bit: u16 = USB_PORT_STAT_HIGHT_SPEED_POWER;
+                if self.dev.super_speed {
+                    power_bit = USB_PORT_STAT_SUPER_SPEED_POWER;
+                }
+
+                Ok(PortState {
+                    status,
+                    powered: status & power_bit != 0,
+                    connected: status & USB_PORT_STAT_CONNECTION != 0,
+                    enabled: status & USB_PORT_STAT_ENABLE != 0,
+                    overcurrent: status & USB_PORT_STAT_OVERCURRENT != 0,
+                })
             }
             Err(e) => Err(e),
         }
     }
 
+    pub fn on(&mut self) -> Result<(), TransferError> {
+        match self.dev.usb.control_out_blocking(
+            Control {
+                control_type: ControlType::Class,
+                recipient: Recipient::Other,
+                request: 0x03,          // set feature
+                value: 1 << 3,          // feat power
+                index: self.num as u16, // port
+            },
+            &[],
+            Duration::from_secs(USB_TIMEOUT_SEC),
+        ) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
     pub fn off(&mut self) -> Result<(), TransferError> {
-      match self.usb.control_out_blocking(
-          Control {
-              control_type: ControlType::Class,
-              recipient: Recipient::Other,
-              request: 0x01, // clear feature
-              value: 1 << 3, // feat power
-              index: self.num as u16, // port
-          },
-          &[],
-          Duration::from_secs(USB_TIMEOUT_SEC),
-      ) {
-          Ok(_) => {
-            self.powered = false;
-            self.connected = false;
-            self.enabled = false;
-            self.overcurrent = false;
-            Ok(())
-          }
-          Err(e) => Err(e),
-      }
-  }
+        match self.dev.usb.control_out_blocking(
+            Control {
+                control_type: ControlType::Class,
+                recipient: Recipient::Other,
+                request: 0x01,          // clear feature
+                value: 1 << 3,          // feat power
+                index: self.num as u16, // port
+            },
+            &[],
+            Duration::from_secs(USB_TIMEOUT_SEC),
+        ) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
 }
