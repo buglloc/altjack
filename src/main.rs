@@ -27,7 +27,7 @@ fn cli() -> Command {
                         .value_delimiter(',')
                         .value_parser(|s: &str| {
                             let val: u8 = s.parse().map_err(|_| "Not a valid number")?;
-                            if val >= 1 && val <= 4 {
+                            if (1..=4).contains(&val) {
                                 Ok(val)
                             } else {
                                 Err("Port must be between 1 and 4")
@@ -54,10 +54,9 @@ fn cli() -> Command {
 fn main() {
     let args = cli().get_matches();
 
-    let serial = match args.get_one::<String>("serial").map(|s| s.as_str()) {
-        Some(s) => s,
-        None => "",
-    };
+    let serial = args.get_one::<String>("serial")
+        .map(|s| s.as_str())
+        .unwrap_or_default();
 
     match args.subcommand() {
         Some(("list", _sub_matches)) => {
@@ -93,12 +92,12 @@ fn main() {
                         .collect::<Vec<_>>(),
                 });
 
-                println!("{}", out.to_string());
+                println!("{}", out);
             }
         }
         Some(("port", port_matches)) => {
             let ports: Vec<_> = match port_matches.get_many::<u8>("num") {
-                Some(port) => port.map(|x| *x).collect(),
+                Some(port) => port.copied().collect(),
                 None => {
                     eprintln!("Error: --num is required");
                     std::process::exit(1);
@@ -151,7 +150,7 @@ fn main() {
                             })
                             .collect::<Vec<_>>()
                     );
-                    println!("{}", out.to_string());
+                    println!("{}", out);
                 }
                 Some(("on", _sub_matches)) => {
                     let out = json!(
@@ -171,7 +170,7 @@ fn main() {
                             })
                             .collect::<Vec<_>>()
                     );
-                    println!("{}", out.to_string());
+                    println!("{}", out);
                 }
                 Some(("off", _sub_matches)) => {
                     let out = json!(
@@ -191,7 +190,7 @@ fn main() {
                             })
                             .collect::<Vec<_>>()
                     );
-                    println!("{}", out.to_string());
+                    println!("{}", out);
                 }
                 Some(("cycle", cycle_matches)) => {
                     let out = json!(
@@ -222,7 +221,7 @@ fn main() {
                             })
                             .collect::<Vec<_>>()
                     );
-                    println!("{}", out.to_string());
+                    println!("{}", out);
                 }
                 Some(("toggle", _sub_matches)) => {
                     let out = json!(
@@ -251,7 +250,7 @@ fn main() {
                             })
                             .collect::<Vec<_>>()
                     );
-                    println!("{}", out.to_string());
+                    println!("{}", out);
                 }
                 _ => unreachable!(),
             }

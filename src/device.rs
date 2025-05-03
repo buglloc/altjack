@@ -68,9 +68,7 @@ impl DeviceInfo {
     pub fn open(&self) -> Result<Device, Error> {
         match self.usb.open() {
             Ok(dev) => Ok(Device::new(self, dev)),
-            Err(err) => {
-                return Err(err);
-            }
+            Err(err) => Err(err),
         }
     }
 }
@@ -84,10 +82,7 @@ impl Device {
     fn new(di: &DeviceInfo, usb: nusb::Device) -> Self {
         Device {
             usb,
-            super_speed: match di.speed {
-                Some(Speed::Super) | Some(Speed::SuperPlus) => true,
-                _ => false,
-            },
+            super_speed: matches!(di.speed, Some(Speed::Super) | Some(Speed::SuperPlus)),
         }
     }
 
@@ -96,7 +91,7 @@ impl Device {
     }
 
     pub fn port(&self, port: u8) -> Port {
-        Port::new(&self, port)
+        Port::new(self, port)
     }
 }
 
