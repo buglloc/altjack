@@ -1,0 +1,21 @@
+# udev rules for rootless operation on Linux for users in group `hubctl`.
+#
+# Copy this file to /etc/udev/rules.d, then reboot or run:
+#
+#   sudo groupadd hubctl
+#   sudo udevadm control --reload
+#   sudo udevadm trigger
+#
+# To add yourself to this permission group, run:
+#
+#   sudo usermod -a -G hubctl $USER
+
+# This is for Linux before 6.0:
+SUBSYSTEM=="usb", DRIVER=="usb", MODE="0664", GROUP="hubctl", ATTR{idVendor}=="0451", ATTRS{idProduct}=="8342"
+
+# This is for Linux 6.0 or later (ok to keep this block present for older Linux kernels):
+SUBSYSTEM=="usb", DRIVER=="usb", \
+  RUN+="/bin/sh -c \"chown -f root:hubctl $sys$devpath/*port*/disable || true\"" \
+  RUN+="/bin/sh -c \"chmod -f 660 $sys$devpath/*port*/disable || true\""
+
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0451", ATTRS{idProduct}=="8342", GROUP="hubctl", MODE="0660", TAG+="uaccess"
