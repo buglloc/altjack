@@ -82,8 +82,8 @@ fn main() {
                     "dev": di,
                     "ports": ports
                         .iter()
-                        .filter_map(|port| {
-                            match dev.port(*port).state() {
+                        .filter_map(|&port| {
+                            match dev.port(port).state() {
                                 Ok(state) => Some(state),
                                 Err(e) => {
                                     eprintln!("unable to get port #{port} status: {e}");
@@ -133,8 +133,8 @@ fn main() {
                     let out = json!(
                         ports
                             .iter()
-                            .map(|port| {
-                                match dev.port(*port).state() {
+                            .map(|&port| {
+                                match dev.port(port).state() {
                                     Ok(pi) => pi,
                                     Err(e) => {
                                         eprintln!("Error: unable get port {port} state: {e}");
@@ -150,10 +150,10 @@ fn main() {
                     let out = json!(
                         ports
                             .iter()
-                            .map(|port| {
-                                match dev.port(*port).on() {
+                            .map(|&port| {
+                                match dev.port(port).on() {
                                     Ok(_) => json!({
-                                        "port": *port,
+                                        "port": port,
                                         "powered": true,
                                     }),
                                     Err(e) => {
@@ -170,10 +170,10 @@ fn main() {
                     let out = json!(
                         ports
                             .iter()
-                            .map(|port| {
-                                match dev.port(*port).off() {
+                            .map(|&port| {
+                                match dev.port(port).off() {
                                     Ok(_) => json!({
-                                        "port": *port,
+                                        "port": port,
                                         "powered": false,
                                     }),
                                     Err(e) => {
@@ -190,8 +190,8 @@ fn main() {
                     let out = json!(
                         ports
                             .iter()
-                            .map(|port| {
-                                match dev.port(*port).off() {
+                            .map(|&port| {
+                                match dev.port(port).off() {
                                     Ok(_) => (),
                                     Err(e) => {
                                         eprintln!("Error: unable to power off port {port}: {e}");
@@ -205,7 +205,7 @@ fn main() {
                                         .expect("ship happens"),
                                 );
 
-                                match dev.port(*port).on() {
+                                match dev.port(port).on() {
                                     Ok(_) => (),
                                     Err(e) => {
                                         eprintln!("Error: unable to power on port {port}: {e}");
@@ -221,8 +221,8 @@ fn main() {
                     let out = json!(
                         ports
                             .iter()
-                            .map(|port| {
-                                let mut pi = dev.port(*port);
+                            .map(|&port| {
+                                let mut pi = dev.port(port);
                                 let powered = match pi.state() {
                                     Ok(state) => state.powered,
                                     Err(e) => {
@@ -233,7 +233,7 @@ fn main() {
 
                                 match if powered { pi.off() } else { pi.on() } {
                                     Ok(_) => json!({
-                                        "port": *port,
+                                        "port": port,
                                         "powered": !powered,
                                     }),
                                     Err(e) => {
