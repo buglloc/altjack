@@ -1,4 +1,5 @@
 use std::io::Error;
+use std::ops::RangeInclusive;
 use std::time::Duration;
 
 use serde::Serialize;
@@ -6,9 +7,10 @@ use serde::Serialize;
 use nusb;
 use nusb::transfer::{Control, ControlType, Recipient, TransferError};
 
-const ALTJACK_VID: u16 = 0x0451;
+pub const ALTJACK_VID: u16 = 0x0451;
+pub const USABLE_PORTS: RangeInclusive<u8> = 1u8..=4;
+
 const USB_CLASS_HUB: u8 = 0x09;
-const USABLE_PORTS: u8 = 4;
 const USB_TIMEOUT_SEC: u64 = 1;
 
 const USB_PORT_STAT_CONNECTION: u16 = 0x0001;
@@ -87,7 +89,7 @@ impl Device {
     }
 
     pub fn ports(&self) -> impl Iterator<Item = Port> {
-        (1..=USABLE_PORTS).map(|p| self.port(p))
+        USABLE_PORTS.map(|p| self.port(p))
     }
 
     pub fn port(&self, port: u8) -> Port {
@@ -129,7 +131,7 @@ impl Speed {
 
 #[derive(Serialize)]
 pub struct Port<'dev> {
-    pub num: u8,
+    pub port: u8,
 
     #[serde(skip)]
     dev: &'dev Device,
@@ -137,6 +139,7 @@ pub struct Port<'dev> {
 
 #[derive(Debug, Serialize)]
 pub struct PortState {
+    pub port: u8,
     pub status: u16,
     pub powered: bool,
     pub connected: bool,
@@ -145,8 +148,8 @@ pub struct PortState {
 }
 
 impl<'dev> Port<'dev> {
-    fn new(dev: &'dev Device, num: u8) -> Self {
-        Port { num, dev }
+    fn new(dev: &'dev Device, port: u8) -> Self {
+        Port { port, dev }
     }
 
     pub fn state(&self) -> Result<PortState, TransferError> {
@@ -157,7 +160,7 @@ impl<'dev> Port<'dev> {
                 recipient: Recipient::Other,
                 request: 0x00, // get status
                 value: 0,
-                index: self.num as u16,
+                index: self.port as u16,
             },
             &mut ust,
             Duration::from_secs(USB_TIMEOUT_SEC),
@@ -172,6 +175,7 @@ impl<'dev> Port<'dev> {
                 }
 
                 Ok(PortState {
+                    port: self.port,
                     status,
                     powered: status & power_bit != 0,
                     connected: status & USB_PORT_STAT_CONNECTION != 0,
@@ -188,9 +192,9 @@ impl<'dev> Port<'dev> {
             Control {
                 control_type: ControlType::Class,
                 recipient: Recipient::Other,
-                request: 0x03,          // set feature
-                value: 1 << 3,          // feat power
-                index: self.num as u16, // port
+                request: 0x03, // set feature
+                value: 1 << 3, // feat power
+                index: self.port as u16,
             },
             &[],
             Duration::from_secs(USB_TIMEOUT_SEC),
@@ -205,9 +209,9 @@ impl<'dev> Port<'dev> {
             Control {
                 control_type: ControlType::Class,
                 recipient: Recipient::Other,
-                request: 0x01,          // clear feature
-                value: 1 << 3,          // feat power
-                index: self.num as u16, // port
+                request: 0x01, // clear feature
+                value: 1 << 3, // feat power
+                index: self.port as u16,
             },
             &[],
             Duration::from_secs(USB_TIMEOUT_SEC),
