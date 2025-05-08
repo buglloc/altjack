@@ -1,12 +1,12 @@
 use std::time::Duration;
 
-#[macro_use]
 extern crate serde_json;
 use serde_json::json;
 
 use clap::{ArgAction, Command, arg};
 
-use altjack::device;
+use altjack::hid_device;
+use altjack::usb_device;
 
 fn cli() -> Command {
     Command::new("altjack")
@@ -21,18 +21,25 @@ fn cli() -> Command {
                 .value_delimiter(',')
                 .value_parser(|s: &str| {
                     let val: u8 = s.parse().map_err(|_| "Not a valid number")?;
-                    if device::USABLE_PORTS.contains(&val) {
+                    if usb_device::USABLE_PORTS.contains(&val) {
                         Ok(val)
                     } else {
                         Err(format!(
                             "Port must be between in range {:?}",
-                            device::USABLE_PORTS
+                            usb_device::USABLE_PORTS
                         ))
                     }
                 })
                 .global(true),
         )
         .subcommand(Command::new("list").about("List connected AltJacks"))
+        .subcommand(
+            Command::new("touch").about("Touch port").arg(
+                arg!(--duration <duration> "Touch duration")
+                    .value_parser(clap::builder::ValueParser::from(humantime::parse_duration))
+                    .default_value("500ms"),
+            ),
+        )
         .subcommand(Command::new("state").about("Port state"))
         .subcommand(Command::new("on").about("Turn port on"))
         .subcommand(Command::new("off").about("Turn port off"))
@@ -56,12 +63,12 @@ fn main() {
 
     let ports: Vec<_> = match matches.get_many::<u8>("ports") {
         Some(port) => port.copied().collect(),
-        None => device::USABLE_PORTS.collect::<Vec<_>>(),
+        None => usb_device::USABLE_PORTS.collect::<Vec<_>>(),
     };
 
     match matches.subcommand() {
         Some(("list", _sub_matches)) => {
-            let devices = match device::list(serial) {
+            let devices = match usb_device::list(serial) {
                 Ok(devices) => devices,
                 Err(e) => {
                     eprintln!("Error: unable to list devices: {e}");
@@ -97,8 +104,60 @@ fn main() {
                 println!("{}", out);
             }
         }
+        Some(("touch", touch_matches)) => {
+            let duration = touch_matches
+                .get_one::<Duration>("duration")
+                .expect("ship happens");
+
+            let devices = match hid_device::list(serial) {
+                Ok(devices) => devices,
+                Err(e) => {
+                    eprintln!("Error: unable to list devices: {e}");
+                    std::process::exit(1);
+                }
+            };
+
+            let dev = match devices.len() {
+                0 => {
+                    eprintln!("Error: AltJack was not found");
+                    std::process::exit(1);
+                }
+                1 => match devices.first().unwrap().open() {
+                    Ok(dev) => dev,
+                    Err(e) => {
+                        eprintln!("Error: unable to open device: {e}");
+                        std::process::exit(1);
+                    }
+                },
+                _ => {
+                    eprintln!(
+                        "Error: more than one AltJack was found, please use --serial to specify concrette device"
+                    );
+                    std::process::exit(1);
+                }
+            };
+
+            let out = json!(
+                ports
+                    .iter()
+                    .map(|&port| {
+                        match dev.touch(port, duration) {
+                            Ok(_) => json!({
+                                "port": port,
+                                "touched": true,
+                            }),
+                            Err(e) => {
+                                eprintln!("Error: unable trigger port {port}: {e}");
+                                std::process::exit(1);
+                            }
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            );
+            println!("{}", out);
+        }
         _ => {
-            let mut devices = match device::list(serial) {
+            let mut devices = match usb_device::list(serial) {
                 Ok(devices) => devices,
                 Err(e) => {
                     eprintln!("Error: unable to list devices: {e}");
