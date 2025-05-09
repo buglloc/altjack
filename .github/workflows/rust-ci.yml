@@ -15,19 +15,34 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
+        os: [ubuntu-latest, macos-latest]
         BUILD_TARGET: [release] # refers to a cargo profile
+    runs-on: ${{ matrix.os }}
     outputs:
       release_built: ${{ steps.set-output.outputs.release_built }}
     steps:
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
+
+      - name: Install system dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install pkg-config hidapi
+
       - uses: actions/checkout@v4
+
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: clippy, rustfmt
-      - name: Build binaries in "${{ matrix.BUILD_TARGET }}" mode
+
+      - name: Build binaries on "${{ matrix.os }}"
         run: cargo build --profile ${{ matrix.BUILD_TARGET }}
-      - name: Run tests in "${{ matrix.BUILD_TARGET }}" mode
+
+      - name: Run tests on "${{ matrix.os }}"
         run: cargo test --profile ${{ matrix.BUILD_TARGET }}
-      - name: Run in "${{ matrix.BUILD_TARGET }}" mode
+
+      - name: Run clippy on "${{ matrix.os }}"
         run: cargo clippy --all-targets --all-features
-      - name: Rustfmt Check
+
+      - name: Rustfmt check on "${{ matrix.os }}"
         uses: actions-rust-lang/rustfmt@v1
