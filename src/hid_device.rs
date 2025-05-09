@@ -21,16 +21,9 @@ pub fn list(serial: &str) -> Result<Vec<DeviceInfo>, HidError> {
 
     Ok(api
         .device_list()
-        .filter(|di| {
-            di.vendor_id() == ALTJACK_VID
-                && (serial.is_empty() || di.serial_number().unwrap_or_default() == serial)
-        })
-        .map(|di| DeviceInfo {
-            vid: di.vendor_id(),
-            pid: di.product_id(),
-            serial: di.serial_number().unwrap_or_default().to_string(),
-            path: di.path().to_owned(),
-        })
+        .filter(|di| di.vendor_id() == ALTJACK_VID)
+        .filter(|di| serial.is_empty() || di.serial_number().unwrap_or_default() == serial)
+        .map(DeviceInfo::new)
         .collect())
 }
 
@@ -43,6 +36,15 @@ pub struct DeviceInfo {
 }
 
 impl DeviceInfo {
+    fn new(di: &hidapi::DeviceInfo) -> Self {
+        DeviceInfo {
+            vid: di.vendor_id(),
+            pid: di.product_id(),
+            serial: di.serial_number().unwrap_or_default().to_string(),
+            path: di.path().to_owned(),
+        }
+    }
+
     pub fn open(&self) -> Result<Device, HidError> {
         let api = HID_API.lock().unwrap();
 

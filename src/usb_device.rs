@@ -23,20 +23,10 @@ const USB_PORT_STAT_SS_POWER: u16 = 0x0200;
 pub fn list(serial: &str) -> Result<impl Iterator<Item = DeviceInfo>, Error> {
     let devices = nusb::list_devices()?;
     Ok(devices
-        .filter(move |di| {
-            if di.vendor_id() != ALTJACK_VID || di.class() != USB_CLASS_HUB {
-                return false;
-            }
-
-            serial.is_empty() || di.serial_number().is_none_or(|s| s == serial)
-        })
-        .map(|di| DeviceInfo {
-            vid: di.vendor_id(),
-            pid: di.product_id(),
-            serial: di.serial_number().unwrap_or_default().to_string(),
-            speed: di.speed().and_then(Speed::from_usb),
-            usb: di,
-        }))
+        .filter(|di| di.vendor_id() == ALTJACK_VID)
+        .filter(|di| di.class() == USB_CLASS_HUB)
+        .filter(move |di| serial.is_empty() || di.serial_number().is_none_or(|s| s == serial))
+        .map(DeviceInfo::new))
 }
 
 #[derive(Debug, Serialize)]
@@ -51,6 +41,16 @@ pub struct DeviceInfo {
 }
 
 impl DeviceInfo {
+    fn new(di: nusb::DeviceInfo) -> Self {
+        DeviceInfo {
+            vid: di.vendor_id(),
+            pid: di.product_id(),
+            serial: di.serial_number().unwrap_or_default().to_string(),
+            speed: di.speed().and_then(Speed::from_usb),
+            usb: di,
+        }
+    }
+
     pub fn open(&self) -> Result<Device, Error> {
         self.usb.open().map(|usb| Device::new(self, usb))
     }
@@ -157,7 +157,7 @@ impl<'a> Port<'a> {
     }
 
     pub fn on(&mut self) -> Result<(), TransferError> {
-        self.dev.usb.control_out_blocking(
+        self.control_out(
             Control {
                 control_type: ControlType::Class,
                 recipient: Recipient::Other,
@@ -166,14 +166,11 @@ impl<'a> Port<'a> {
                 index: self.port as u16,
             },
             &[],
-            USB_TIMEOUT,
-        )?;
-
-        Ok(())
+        )
     }
 
     pub fn off(&mut self) -> Result<(), TransferError> {
-        self.dev.usb.control_out_blocking(
+        self.control_out(
             Control {
                 control_type: ControlType::Class,
                 recipient: Recipient::Other,
@@ -182,8 +179,13 @@ impl<'a> Port<'a> {
                 index: self.port as u16,
             },
             &[],
-            USB_TIMEOUT,
-        )?;
+        )
+    }
+
+    fn control_out(&self, control: Control, data: &[u8]) -> Result<(), TransferError> {
+        self.dev
+            .usb
+            .control_out_blocking(control, data, USB_TIMEOUT)?;
 
         Ok(())
     }
