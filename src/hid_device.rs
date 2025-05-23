@@ -1,12 +1,9 @@
-use hidapi::{HidApi, HidDevice, HidError};
-use once_cell::sync::Lazy;
 use std::ffi::CString;
-use std::ops::RangeInclusive;
 use std::sync::Mutex;
 use std::time::Duration;
 
-pub const ALTJACK_VID: u16 = 0x0451;
-pub const USABLE_PORTS: RangeInclusive<u8> = 1u8..=4;
+use hidapi::{HidApi, HidDevice, HidError};
+use once_cell::sync::Lazy;
 
 // const HID_READ_CMD: u8 = 0x01;
 const HID_WRITE_STOP_CMD: u8 = 0x02;
@@ -21,7 +18,7 @@ pub fn list(serial: &str) -> Result<Vec<DeviceInfo>, HidError> {
 
     Ok(api
         .device_list()
-        .filter(|di| di.vendor_id() == ALTJACK_VID)
+        .filter(|di| di.vendor_id() == crate::ALTJACK_VID)
         .filter(|di| serial.is_empty() || di.serial_number().unwrap_or_default() == serial)
         .map(DeviceInfo::new)
         .collect())
@@ -73,7 +70,7 @@ impl Device {
     }
 
     pub fn touch(&self, port: u8, duration: &Duration) -> Result<(), HidError> {
-        if !USABLE_PORTS.contains(&port) {
+        if !crate::USABLE_PORTS.contains(&port) {
             return Err(HidError::HidApiError {
                 message: "invalid port".into(),
             });
