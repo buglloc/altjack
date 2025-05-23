@@ -276,11 +276,7 @@ fn run() -> anyhow::Result<()> {
                             }
                         };
 
-                        let rc = if powered {
-                            pi.off()
-                        } else {
-                            pi.on()
-                        };
+                        let rc = if powered { pi.off() } else { pi.on() };
 
                         match rc {
                             Ok(_) => json!({
