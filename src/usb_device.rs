@@ -1,15 +1,10 @@
 use std::fmt::Debug;
 use std::io::Error;
-use std::ops::RangeInclusive;
 use std::time::Duration;
-
-use serde::Serialize;
 
 use nusb;
 use nusb::transfer::{Control, ControlType, Recipient, TransferError};
-
-pub const ALTJACK_VID: u16 = 0x0451;
-pub const USABLE_PORTS: RangeInclusive<u8> = 1..=4;
+use serde::Serialize;
 
 const USB_CLASS_HUB: u8 = 0x09;
 const USB_TIMEOUT: Duration = Duration::from_secs(1);
@@ -23,7 +18,7 @@ const USB_PORT_STAT_SS_POWER: u16 = 0x0200;
 pub fn list(serial: &str) -> Result<impl Iterator<Item = DeviceInfo>, Error> {
     let devices = nusb::list_devices()?;
     Ok(devices
-        .filter(|di| di.vendor_id() == ALTJACK_VID)
+        .filter(|di| di.vendor_id() == crate::ALTJACK_VID)
         .filter(|di| di.class() == USB_CLASS_HUB)
         .filter(move |di| serial.is_empty() || di.serial_number().is_none_or(|s| s == serial))
         .map(DeviceInfo::new))
@@ -68,7 +63,7 @@ impl Device {
     }
 
     pub fn ports(&self) -> impl Iterator<Item = Port> {
-        USABLE_PORTS.map(|p| self.port(p))
+        crate::USABLE_PORTS.map(|p| self.port(p))
     }
 
     pub fn port(&self, port: u8) -> Port {
