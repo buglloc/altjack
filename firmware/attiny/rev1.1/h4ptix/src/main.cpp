@@ -4,52 +4,20 @@
 #define SDA_PIN        PIN_PA1
 #define SCL_PIN        PIN_PA2
 
-#define SHIFT_DATA_PIN   PIN_PA3
-#define SHIFT_CLOCK_PIN  PIN_PA6
-#define SHIFT_LATCH_PIN  PIN_PA7
-
 #define NUM_PORTS  4
 
 typedef struct  {
   bool active;
   uint32_t until;
-  uint8_t outBit;
+  uint8_t pin;
 } port;
 
 port ports[NUM_PORTS] = {
-  {false, 0, 0x01},
-  {false, 0, 0x02},
-  {false, 0, 0x06},
-  {false, 0, 0x07},
+  {false, 0, PIN_PC3},
+  {false, 0, PIN_PC2},
+  {false, 0, PIN_PC1},
+  {false, 0, PIN_PC0},
 };
-
-void writeShiftRegister(uint8_t value) {
-  // MSB first, shift out
-  for (int i = 7; i >= 0; i--) {
-    digitalWrite(SHIFT_CLOCK_PIN, LOW);
-    digitalWrite(SHIFT_DATA_PIN, (value >> i) & 0x01);
-    digitalWrite(SHIFT_CLOCK_PIN, HIGH);
-  }
-
-  // Latch
-  digitalWrite(SHIFT_LATCH_PIN, LOW);
-  digitalWrite(SHIFT_LATCH_PIN, HIGH);
-}
-
-uint8_t calcRegister() {
-  uint8_t out = 0;
-  for (uint8_t i = 0; i < NUM_PORTS; i++) {
-    if (ports[i].active) {
-      out |= (1 << i);
-    }
-  }
-
-  return out;
-}
-
-void syncRegister() {
-  writeShiftRegister(calcRegister());
-}
 
 void onReceive(int len) {
   uint8_t buf[3] = {0};
@@ -80,21 +48,26 @@ void onReceive(int len) {
 
   ports[port].active = true;
   ports[port].until = millis() + duration;
-  syncRegister();
+  digitalWrite(ports[port].pin, HIGH);
 }
 
 void onRequest() {
   // Echo back the last value
-  Wire.write(calcRegister());
+  uint8_t out = 0;
+  for (uint8_t i = 0; i < NUM_PORTS; i++) {
+    if (ports[i].active) {
+      out |= (1 << i);
+    }
+  }
+  Wire.write(out);
 }
 
 void setup() {
-  // Shift register
-  pinMode(SHIFT_DATA_PIN, OUTPUT);
-  pinMode(SHIFT_CLOCK_PIN, OUTPUT);
-  pinMode(SHIFT_LATCH_PIN, OUTPUT);
-
-  syncRegister();
+  // GPIO
+  for (int i = 0; i < NUM_PORTS; i++) {
+    pinMode(ports[i].pin, OUTPUT);
+    digitalWrite(ports[i].pin, LOW);
+  }
 
   // I2C
   Wire.pins(SDA_PIN, SCL_PIN);
@@ -105,16 +78,11 @@ void setup() {
 
 void loop() {
   uint32_t now = millis();
-  bool updated = false;
 
   for (int i = 0; i < NUM_PORTS; i++) {
     if (ports[i].active && now >= ports[i].until) {
       ports[i].active = false;
-      updated = true;
+      digitalWrite(ports[i].pin, LOW);
     }
-  }
-
-  if (updated) {
-    syncRegister();
   }
 }
