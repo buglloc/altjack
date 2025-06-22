@@ -1,14 +1,13 @@
-use std::time::Duration;
-
 use clap::{ArgAction, Command, arg};
-use serde_json::json;
 
-use altjack::hid_device;
-use altjack::usb_device;
+mod commands;
+mod device;
+
+use device::DeviceManager;
 
 fn cli() -> Command {
     Command::new("altjack")
-        .about("AltJack CLI utility")
+        .about("AltJack utility")
         .arg_required_else_help(true)
         .subcommand_required(true)
         .allow_external_subcommands(false)
@@ -49,44 +48,20 @@ fn cli() -> Command {
             ),
         )
         .subcommand(Command::new("toggle").about("Toggle port power"))
-}
-
-fn open_hid_device(serial: &str) -> anyhow::Result<hid_device::Device> {
-    let devices = match hid_device::list(serial) {
-        Ok(devices) => devices,
-        Err(e) => anyhow::bail!("unable to list devices: {e}"),
-    };
-
-    match devices.len() {
-        0 => anyhow::bail!("AltJack was not found"),
-        1 => match devices.first().unwrap().open() {
-            Ok(dev) => Ok(dev),
-            Err(e) => anyhow::bail!("unable to open device: {e}"),
-        },
-        _ => anyhow::bail!(
-            "more than one AltJack was found, please use --serial to specify concrette device"
-        ),
-    }
-}
-
-fn open_usb_device(serial: &str) -> anyhow::Result<usb_device::Device> {
-    let mut devices = match usb_device::list(serial) {
-        Ok(devices) => devices,
-        Err(e) => anyhow::bail!("unable to list devices: {e}"),
-    };
-
-    let di = match (devices.next(), devices.next()) {
-        (Some(first), None) => first,
-        (None, _) => anyhow::bail!("AltJack was not found"),
-        (_, Some(_)) => anyhow::bail!(
-            "more than one AltJack was found, please use --serial to specify concrette device"
-        ),
-    };
-
-    match di.open() {
-        Ok(dev) => Ok(dev),
-        Err(e) => anyhow::bail!("unable to open device: {e}"),
-    }
+        .subcommand(
+            Command::new("monitor")
+                .about("Continuously monitor INA219 measurements")
+                .arg(
+                    arg!(--interval <interval> "Monitoring interval")
+                        .value_parser(clap::builder::ValueParser::from(humantime::parse_duration))
+                        .default_value("1s"),
+                ),
+        )
+        .subcommand(Command::new("calibrate").about("Initialize INA219 voltage monitoring"))
+        .subcommand(Command::new("voltage").about("Read bus voltage from INA219"))
+        .subcommand(Command::new("current").about("Read current from INA219"))
+        .subcommand(Command::new("power").about("Read power from INA219"))
+        .subcommand(Command::new("measurements").about("Read all voltage measurements from INA219"))
 }
 
 fn run() -> anyhow::Result<()> {
@@ -102,200 +77,50 @@ fn run() -> anyhow::Result<()> {
         None => altjack::USABLE_PORTS.collect::<Vec<_>>(),
     };
 
-    match matches.subcommand() {
-        Some(("list", _sub_matches)) => {
-            let devices = match usb_device::list(serial) {
-                Ok(devices) => devices,
-                Err(e) => anyhow::bail!("unable to list devices: {e}"),
-            };
+    let device_manager = DeviceManager::new(serial);
 
-            let out = json!(
-                devices
-                    .into_iter()
-                    .map(|di| {
-                        match di.open() {
-                            Ok(dev) => json!({
-                                "dev": di,
-                                "ports": ports
-                                    .iter()
-                                    .map(|&port| {
-                                        match dev.port(port).state() {
-                                            Ok(state) => json!(state),
-                                            Err(e) => json!({
-                                                "port": port,
-                                                "err": format!("opening port: {e}")
-                                            })
-                                        }
-                                    })
-                                    .collect::<Vec<_>>(),
-                            }),
-                            Err(e) => json!({
-                                "dev": di,
-                                "err": format!("opening device: {e}"),
-                            }),
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            );
-            println!("{}", out);
+    let result = match matches.subcommand() {
+        Some(("list", sub_matches)) => commands::list::handle(sub_matches, &device_manager, &ports),
+        Some(("touch", sub_matches)) => {
+            commands::attiny::handle(sub_matches, &device_manager, &ports)
         }
-        Some(("touch", touch_matches)) => {
-            let duration = touch_matches
-                .get_one::<Duration>("duration")
-                .expect("ship happens");
-
-            let dev = open_hid_device(serial)?;
-            let out = json!(
-                ports
-                    .iter()
-                    .map(|&port| {
-                        match dev.touch(port, duration) {
-                            Ok(_) => json!({
-                                "port": port,
-                                "touched": true,
-                            }),
-                            Err(e) => json!({
-                                "port": port,
-                                "err": e.to_string(),
-                            }),
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            );
-            println!("{}", out);
+        Some(("state", sub_matches)) => {
+            commands::state::handle(sub_matches, &device_manager, &ports)
         }
-        Some(("state", _sub_matches)) => {
-            let dev = open_usb_device(serial)?;
-            let out = json!(
-                ports
-                    .iter()
-                    .map(|&port| {
-                        match dev.port(port).state() {
-                            Ok(pi) => json!(pi),
-                            Err(e) => json!({
-                                "port": port,
-                                "err": e.to_string(),
-                            }),
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            );
-            println!("{}", out);
+        Some(("on", sub_matches)) => {
+            commands::power::handle_on(sub_matches, &device_manager, &ports)
         }
-        Some(("on", _sub_matches)) => {
-            let dev = open_usb_device(serial)?;
-            let out = json!(
-                ports
-                    .iter()
-                    .map(|&port| {
-                        match dev.port(port).on() {
-                            Ok(_) => json!({
-                                "port": port,
-                                "powered": true,
-                            }),
-                            Err(e) => json!({
-                                "port": port,
-                                "err": e.to_string(),
-                            }),
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            );
-            println!("{}", out);
+        Some(("off", sub_matches)) => {
+            commands::power::handle_off(sub_matches, &device_manager, &ports)
         }
-        Some(("off", _sub_matches)) => {
-            let dev = open_usb_device(serial)?;
-            let out = json!(
-                ports
-                    .iter()
-                    .map(|&port| {
-                        match dev.port(port).off() {
-                            Ok(_) => json!({
-                                "port": port,
-                                "powered": false,
-                            }),
-                            Err(e) => json!({
-                                "port": port,
-                                "err": e.to_string(),
-                            }),
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            );
-            println!("{}", out);
+        Some(("cycle", sub_matches)) => {
+            commands::power::handle_cycle(sub_matches, &device_manager, &ports)
         }
-        Some(("cycle", cycle_matches)) => {
-            let dev = open_usb_device(serial)?;
-            let out = json!(
-                ports
-                    .iter()
-                    .map(|&port| {
-                        if let Err(e) = dev.port(port).off() {
-                            return json!({
-                                "port": port,
-                                "err": format!("unable to power off: {e}"),
-                            });
-                        }
-
-                        std::thread::sleep(
-                            *cycle_matches
-                                .get_one::<Duration>("delay")
-                                .expect("ship happens"),
-                        );
-
-                        if let Err(e) = dev.port(port).on() {
-                            return json!({
-                                "port": port,
-                                "err": format!("unable to power on: {e}"),
-                            });
-                        }
-
-                        json!({
-                            "port": port,
-                            "powered": true,
-                        })
-                    })
-                    .collect::<Vec<_>>()
-            );
-            println!("{}", out);
+        Some(("toggle", sub_matches)) => {
+            commands::power::handle_toggle(sub_matches, &device_manager, &ports)
         }
-        Some(("toggle", _sub_matches)) => {
-            let dev = open_usb_device(serial)?;
-            let out = json!(
-                ports
-                    .iter()
-                    .map(|&port| {
-                        let mut pi = dev.port(port);
-                        let powered = match pi.state() {
-                            Ok(state) => state.powered,
-                            Err(e) => {
-                                return json!({
-                                    "port": port,
-                                    "err": format!("unable to get port state: {e}"),
-                                });
-                            }
-                        };
-
-                        let rc = if powered { pi.off() } else { pi.on() };
-
-                        match rc {
-                            Ok(_) => json!({
-                                "port": port,
-                                "powered": !powered,
-                            }),
-                            Err(e) => json!({
-                                "port": port,
-                                "err": e.to_string(),
-                            }),
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            );
-            println!("{}", out);
+        Some(("calibrate", sub_matches)) => {
+            commands::ina219::handle_calibrate(sub_matches, &device_manager, &ports)
+        }
+        Some(("voltage", sub_matches)) => {
+            commands::ina219::handle_voltage(sub_matches, &device_manager, &ports)
+        }
+        Some(("current", sub_matches)) => {
+            commands::ina219::handle_current(sub_matches, &device_manager, &ports)
+        }
+        Some(("power", sub_matches)) => {
+            commands::ina219::handle_power(sub_matches, &device_manager, &ports)
+        }
+        Some(("measurements", sub_matches)) => {
+            commands::ina219::handle_measurements(sub_matches, &device_manager, &ports)
+        }
+        Some(("monitor", sub_matches)) => {
+            commands::ina219::handle_monitor(sub_matches, &device_manager, &ports)
         }
         _ => unreachable!(),
-    }
+    };
 
+    result?;
     Ok(())
 }
 
